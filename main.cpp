@@ -50,7 +50,7 @@ typedef struct EventfdManagerArgs {
  * unix sockets.
  */
 typedef struct EventfdManagerPeer {
-    uint id;             /* the id of the peer and index of peer_list in EventfdManager */
+    uint8_t vm_id;             /* the vm_id of the peer and index of peer_list in EventfdManager */
     int sock_fd;          /* connected unix sock */
     int eventfd;
 } EventfdManagerPeer;
@@ -64,7 +64,7 @@ typedef struct EventfdManagerPeer {
 typedef struct EventfdManager {
     char unix_sock_path[PATH_MAX];   /* path to unix socket */
     int sock_fd;                     /* unix sock file descriptor */
-    uint8_t next_vm_id;          /* id to be given to next peer*/
+    uint8_t next_vm_id;          /* vm_id to be given to next peer*/
     std::vector<EventfdManagerPeer> peers;
     int host_channel_eventfd; /* eventfd for host channel kernel module*/
 } EventfdManager;
@@ -83,7 +83,7 @@ static bool add_peer(EventfdManager* manager, EventfdManagerPeer peer) {
     return true;
 }
 
-static int remove_peer(EventfdManager* manager, int idx) {
+static int remove_peer(EventfdManager* manager, uint8_t idx) {
     if (manager->peers.size() == 0) {
         return ERROR_PEER_LIST_EMPTY;
     }
@@ -94,7 +94,7 @@ static int remove_peer(EventfdManager* manager, int idx) {
 
     manager->peers[idx] = manager->peers.back();
     manager->peers.pop_back();
-    return true;
+    return 0;
 }
 
 static void
@@ -224,13 +224,13 @@ err:
 
 static int send_one_msg(int sock_fd, int64_t peer_id, int fd);
 
-static void free_peer(EventfdManager *manager, int idx) {
+static void free_peer(EventfdManager *manager, uint8_t idx) {
     EventfdManagerPeer &peer = manager->peers[idx];
-    fprintf(stderr, "free peer %d\n", peer.id);
+    fprintf(stderr, "free peer %d\n", peer.vm_id);
 
     /* advertise the deletion to other peers */
     for (const auto& other_peer: manager->peers) {
-        send_one_msg(other_peer.sock_fd, peer.id, -1);
+        send_one_msg(other_peer.sock_fd, peer.vm_id, -1);
     }
 
     close(peer.sock_fd);
@@ -243,7 +243,7 @@ void eventfd_manager_close(EventfdManager *manager)
 {
     fprintf(stderr, "close manager\n");
 
-    for (int i = 0; i < manager->peers.size(); i++) {
+    for (uint8_t i = 0; i < manager->peers.size(); i++) {
         free_peer(manager, i);
     }
 
@@ -291,7 +291,7 @@ void set_fd_flag(int fd, int new_flag)
 
 bool exist_vm_id(EventfdManager* manager, uint8_t vm_id) {
     for(const auto& peer: manager->peers) {
-        if (peer.id == vm_id) {
+        if (peer.vm_id == vm_id) {
             return true;
         }
     }
@@ -380,12 +380,12 @@ static int handle_new_conn(EventfdManager* manager) {
 
     next_vm_id = get_next_vm_id(manager);
     if (next_vm_id < 0) {
-        fprintf(stderr, "cannot allocate new client id\n");
+        fprintf(stderr, "cannot allocate new client vm_id\n");
         close(new_fd);
         return -1;
     }
 
-    peer.id = (uint8_t)next_vm_id;
+    peer.vm_id = (uint8_t)next_vm_id;
 
     /* create eventfd */
     ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
@@ -396,8 +396,8 @@ static int handle_new_conn(EventfdManager* manager) {
 
     peer.eventfd = ret;
 
-    /* send peer id and eventfd to peer */
-    ret = send_one_msg(peer.sock_fd, peer.id, peer.eventfd);
+    /* send peer vm_id and eventfd to peer */
+    ret = send_one_msg(peer.sock_fd, peer.vm_id, peer.eventfd);
     if (ret < 0) {
         goto fail;
     }
@@ -410,17 +410,17 @@ static int handle_new_conn(EventfdManager* manager) {
 
     /* advertise the new peer to other */
     for (const auto& other_peer: manager->peers) {
-        send_one_msg(other_peer.sock_fd, peer.id, peer.eventfd);
+        send_one_msg(other_peer.sock_fd, peer.vm_id, peer.eventfd);
     }
 
     /* advertise the other peers to the new one */
     for (const auto& other_peer: manager->peers) {
-        send_one_msg(peer.sock_fd, other_peer.id, other_peer.eventfd);
+        send_one_msg(peer.sock_fd, other_peer.vm_id, other_peer.eventfd);
     }
 
     manager->peers.push_back(peer);
 
-    printf("new peer id = %d\n", peer.id);
+    printf("new peer vm_id = %d\n", peer.vm_id);
     return 0;
 
 fail:
@@ -439,7 +439,7 @@ static int handle_fds(EventfdManager *manager, const FDs fds)
         return -1;
     }
 
-    for (int i = 0; i < manager->peers.size(); i++) {
+    for (uint8_t i = 0; i < manager->peers.size(); i++) {
         // any message from a peer socket result in a close()
         EventfdManagerPeer &peer = manager->peers[i];
         printf("peer.sock_fd=%d\n", peer.sock_fd);
