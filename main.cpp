@@ -99,7 +99,7 @@ static int remove_peer(EventfdManager* manager, uint8_t idx) {
 
 static void
 eventfd_manager_usage(const char *progname) {
-    printf("Usage: %s [OPTION]...\n"
+    printf("[EM] Usage: %s [OPTION]...\n"
            "  -h: show this help\n"
            "  -F: foreground mode (default is to daemonize)\n"
            "  -p <pid-file>: path to the PID file (used in daemon mode only)\n"
@@ -110,7 +110,7 @@ eventfd_manager_usage(const char *progname) {
 static void
 eventfd_manager_help(const char *progname)
 {
-    fprintf(stderr, "Try '%s -h' for more information.\n", progname);
+    fprintf(stderr, "[EM] Try '%s -h' for more information.\n", progname);
 }
 
 /* parse the program arguments, exit on error */
@@ -149,7 +149,7 @@ eventfd_manager_parse_args(Args *args, int argc, char *argv[])
 }
 
 static void eventfd_manager_quit_cb(int signum) {
-    printf("eventfd_manager_quit_cb is called!");
+    printf("[EM] eventfd_manager_quit_cb is called!");
     eventfd_manager_quit = 1;
 }
 
@@ -161,19 +161,20 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
     ret = snprintf(manager->unix_sock_path, sizeof(manager->unix_sock_path),
                    "%s", unix_sock_path);
     if (ret < 0 || ret >= sizeof(manager->unix_sock_path)) {
-        fprintf(stderr, "could not copy unix socket path\n");
+        fprintf(stderr, "[EM] could not copy unix socket path\n");
         return -1;
     }
 
-    fprintf(stderr, "create host channel module eventfd\n");
+    fprintf(stderr, "[EM] create host channel module eventfd\n");
 
     /* create eventfd */
     ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (ret < 0) {
-        fprintf(stderr, "cannot create host channel module's eventfd %s\n", strerror(errno));
+        fprintf(stderr, "[EM] cannot create host channel module's eventfd %s\n", strerror(errno));
         return -1;
     }
     manager->host_channel_eventfd = ret;
+    printf("[EM] host_channel_eventfd = %d\n", manager->host_channel_eventfd);
 
     return 0;
 }
@@ -183,11 +184,11 @@ static int eventfd_manager_start(EventfdManager* manager) {
     struct sockaddr_un s_un;
     int sock_fd, ret;
 
-    fprintf(stderr, "create & bind socket %s\n", manager->unix_sock_path);
+    fprintf(stderr, "[EM] create & bind socket %s\n", manager->unix_sock_path);
     /* create the unix listening socket */
     sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock_fd < 0) {
-        fprintf(stderr, "cannot create socket: %s\n", strerror(errno));
+        fprintf(stderr, "[EM] cannot create socket: %s\n", strerror(errno));
         goto err;
     }
 
@@ -195,22 +196,22 @@ static int eventfd_manager_start(EventfdManager* manager) {
     ret = snprintf(s_un.sun_path, sizeof(s_un.sun_path), "%s",
                    manager->unix_sock_path);
     if (ret < 0 || ret >= sizeof(s_un.sun_path)) {
-        fprintf(stderr, "could not copy unix socket path\n");
+        fprintf(stderr, "[EM] could not copy unix socket path\n");
         goto err_close_sock;
     }
     if (bind(sock_fd, (struct sockaddr *)&s_un, sizeof(s_un)) < 0) {
-        fprintf(stderr, "cannot connect to %s: %s\n", s_un.sun_path,
+        fprintf(stderr, "[EM] cannot connect to %s: %s\n", s_un.sun_path,
                              strerror(errno));
         goto err_close_sock;
     }
 
     if (listen(sock_fd, LISTEN_BACKLOG) < 0) {
-        fprintf(stderr, "listen() failed: %s\n", strerror(errno));
+        fprintf(stderr, "[EM] listen() failed: %s\n", strerror(errno));
         goto err_unlink_sock;
     }
 
     manager->sock_fd = sock_fd;
-    printf("manager->sock_fd: %d\n", manager->sock_fd);
+    printf("[EM] manager->sock_fd: %d\n", manager->sock_fd);
 
     return 0;
 
@@ -226,7 +227,7 @@ static int send_one_msg(int sock_fd, int64_t peer_id, int fd);
 
 static void free_peer(EventfdManager *manager, uint8_t idx) {
     Peer &peer = manager->peers[idx];
-    fprintf(stderr, "free peer %d\n", peer.vm_id);
+    fprintf(stderr, "[EM] free peer %d\n", peer.vm_id);
 
     /* advertise the deletion to other peers */
     for (const auto& other_peer: manager->peers) {
@@ -241,7 +242,7 @@ static void free_peer(EventfdManager *manager, uint8_t idx) {
 /* close connections to clients, the unix socket and the shm fd */
 void eventfd_manager_close(EventfdManager *manager)
 {
-    fprintf(stderr, "close manager\n");
+    fprintf(stderr, "[EM] close manager\n");
 
     for (uint8_t i = 0; i < manager->peers.size(); i++) {
         free_peer(manager, i);
@@ -262,7 +263,7 @@ FDs get_fds(const EventfdManager *manager)
     Peer *peer;
 
     if (manager->sock_fd == -1) {
-		printf("manager->socket_fd is not set");
+		printf("[EM] manager->socket_fd is not set");
         return fds;
     }
 
@@ -346,10 +347,10 @@ static int send_one_msg(int sock_fd, int64_t peer_id, int fd) {
 
     ret = sendmsg(sock_fd, &msg, 0);
     if (ret < 0) {
-        fprintf(stderr, "sendmsg() failed with %s\n", strerror(errno));
+        fprintf(stderr, "[EM] sendmsg() failed with %s\n", strerror(errno));
         goto err;
     } else if (ret == 0) {
-        fprintf(stderr, "sendmsg() failed\n");
+        fprintf(stderr, "[EM] sendmsg() failed\n");
         goto err;
     }
 
@@ -369,18 +370,18 @@ static int handle_new_conn(EventfdManager* manager) {
     unaddr_len = sizeof(unaddr);
     new_fd = accept(manager->sock_fd, (struct sockaddr *)&unaddr, &unaddr_len);
     if (new_fd < 0) {
-        fprintf(stderr, "cannot accept() %s\n", strerror(errno));
+        fprintf(stderr, "[EM] cannot accept() %s\n", strerror(errno));
         return -1;
     }
 
     set_fd_flag(new_fd, O_NONBLOCK);
     peer.sock_fd = new_fd;
 
-    printf("accept()=%d\n", new_fd);
+    printf("[EM] new peer sock_fd = %d\n", new_fd);
 
     next_vm_id = get_next_vm_id(manager);
     if (next_vm_id < 0) {
-        fprintf(stderr, "cannot allocate new client vm_id\n");
+        fprintf(stderr, "[EM] cannot allocate new client vm_id\n");
         close(new_fd);
         return -1;
     }
@@ -390,11 +391,13 @@ static int handle_new_conn(EventfdManager* manager) {
     /* create eventfd */
     ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (ret < 0) {
-        fprintf(stderr, "cannot create eventfd %s\n", strerror(errno));
+        fprintf(stderr, "[EM] cannot create eventfd %s\n", strerror(errno));
         goto fail;
     }
 
     peer.eventfd = ret;
+
+    printf("[EM] new peer eventfd = %d\n", peer.eventfd);
 
     /* send peer vm_id and eventfd to peer */
     ret = send_one_msg(peer.sock_fd, peer.vm_id, peer.eventfd);
@@ -420,7 +423,7 @@ static int handle_new_conn(EventfdManager* manager) {
 
     manager->peers.push_back(peer);
 
-    printf("new peer vm_id = %d\n", peer.vm_id);
+    printf("[EM] new peer vm_id = %d\n", peer.vm_id);
     return 0;
 
 fail:
@@ -432,17 +435,17 @@ fail:
 /* process incoming messages on the sockets in fd_set */
 static int handle_fds(EventfdManager *manager, const FDs fds)
 {
-    printf("handle_fds() start\n");
+    printf("[EM] handle_fds() start\n");
     if (manager->sock_fd < fds.max_fd && FD_ISSET(manager->sock_fd, &fds.set) &&
         handle_new_conn(manager) < 0 && errno != EINTR) {
-        printf("handle_new_conn() failed\n");
+        printf("[EM] handle_new_conn() failed\n");
         return -1;
     }
 
     for (uint8_t i = 0; i < manager->peers.size(); i++) {
         // any message from a peer socket result in a close()
         Peer &peer = manager->peers[i];
-        printf("peer.sock_fd=%d\n", peer.sock_fd);
+        printf("[EM] peer.sock_fd=%d\n", peer.sock_fd);
         if (peer.sock_fd < fds.max_fd && FD_ISSET(peer.sock_fd, &fds.set)) {
             free_peer(manager, i);
         }
@@ -457,13 +460,13 @@ static int poll_events(EventfdManager *manager)
     FDs fds = {};
     int ret = -1;
 
-	printf("start poll_events()");
+	printf("[EM] start poll_events()");
 
     while (!eventfd_manager_quit)
     {
         fds = get_fds(manager);
         if (fds.max_fd == 0) {
-            fprintf(stderr, "There is no any fd\n");
+            fprintf(stderr, "[EM] There is no any fd\n");
             return -1;
         }
 
@@ -471,24 +474,24 @@ static int poll_events(EventfdManager *manager)
 
         if (ret < 0) {
             if (errno == EINTR) {
-				printf("ignore EINTR during polling");
+				printf("[EM] ignore EINTR during polling");
                 continue;
             }
 
-            fprintf(stderr, "select error: %s\n", strerror(errno));
+            fprintf(stderr, "[EM] select error: %s\n", strerror(errno));
             break;
         }
         if (ret == 0) {
-            printf("wait for event..");
+            printf("[EM] wait for event..");
             continue;
         }
 
         if (handle_fds(manager, fds) < 0) {
-            fprintf(stderr, "handle_fds() failed\n");
+            fprintf(stderr, "[EM] handle_fds() failed\n");
             break;
         }
     }
-	printf("exit poll_events()");
+	printf("[EM] exit poll_events()");
 
     return ret;
 }
@@ -528,13 +531,13 @@ int main(int argc, char *argv[])
 
     /* init the EventfdManager structure */
     if (eventfd_manager_init(&manager, args.unix_socket_path)) {
-        fprintf(stderr, "cannot init evenfd_manager\n");
+        fprintf(stderr, "[EM] cannot init evenfd_manager\n");
         goto err;
     }
 
     /* start the eventfd manager (open unix socket) */
     if (eventfd_manager_start(&manager) < 0) {
-        fprintf(stderr, "cannot bind\n");
+        fprintf(stderr, "[EM] cannot bind\n");
         goto err;
     }
 
@@ -542,14 +545,14 @@ int main(int argc, char *argv[])
         FILE *fp;
 
         if (daemon(1, 1) < 0) {
-            fprintf(stderr, "cannot daemonize: %s\n", strerror(errno));
+            fprintf(stderr, "[EM] cannot daemonize: %s\n", strerror(errno));
             goto err_close;
         }
 
         /* write pid file */
         fp = fopen(args.pid_file, "w");
         if (fp == NULL) {
-            fprintf(stderr, "cannot write pid file: %s\n", strerror(errno));
+            fprintf(stderr, "[EM] cannot write pid file: %s\n", strerror(errno));
             goto err_close;
         }
 
@@ -558,7 +561,7 @@ int main(int argc, char *argv[])
     }
 
     poll_events(&manager);
-    fprintf(stdout, "eventfd_manager disconnected\n");
+    fprintf(stdout, "[EM] eventfd_manager disconnected\n");
     ret = 0;
 
 err_close:
