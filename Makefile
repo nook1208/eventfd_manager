@@ -1,8 +1,8 @@
 CC := $(CROSS_COMPILE)g++
 CFLAGS := -g #debugging option
 
-main: main.cpp
-	$(CC) $(CFLAGS) main.cpp -o main
+eventfd_manager: main.cpp
+	$(CC) $(CFLAGS) main.cpp -o eventfd_manager
 
 clean:
-	rm -f main
+	rm -f eventfd_manager
