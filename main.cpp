@@ -35,25 +35,25 @@ typedef enum Error
 static int eventfd_manager_quit;
 
 /* arguments given by the user */
-typedef struct EventfdManagerArgs {
+typedef struct Args {
     bool foreground;
     const char *pid_file;
     const char *unix_socket_path;
-} EventfdManagerArgs;
+} Args;
 
 /*
  * Structure storing a peer
  *
  * Each time a peer connects to an eventfd manager, a new
- * EventfdManagerPeer structure is created. This peer and all its
+ * Peer structure is created. This peer and all its
  * eventfd is advertised to all connected clients through the connected
  * unix sockets.
  */
-typedef struct EventfdManagerPeer {
+typedef struct Peer {
     uint8_t vm_id;             /* the vm_id of the peer and index of peer_list in EventfdManager */
     int sock_fd;          /* connected unix sock */
     int eventfd;
-} EventfdManagerPeer;
+} Peer;
 
 /*
  * Structure describing an eventfd manager
@@ -65,7 +65,7 @@ typedef struct EventfdManager {
     char unix_sock_path[PATH_MAX];   /* path to unix socket */
     int sock_fd;                     /* unix sock file descriptor */
     uint8_t next_vm_id;          /* vm_id to be given to next peer*/
-    std::vector<EventfdManagerPeer> peers;
+    std::vector<Peer> peers;
     int host_channel_eventfd; /* eventfd for host channel kernel module*/
 } EventfdManager;
 
@@ -75,7 +75,7 @@ typedef struct FDs {
 } FDs;
 
 
-static bool add_peer(EventfdManager* manager, EventfdManagerPeer peer) {
+static bool add_peer(EventfdManager* manager, Peer peer) {
     if (manager->peers.size() >= PEER_LIST_MAX) {
         return false;
     }
@@ -115,7 +115,7 @@ eventfd_manager_help(const char *progname)
 
 /* parse the program arguments, exit on error */
 static void
-eventfd_manager_parse_args(EventfdManagerArgs *args, int argc, char *argv[])
+eventfd_manager_parse_args(Args *args, int argc, char *argv[])
 {
     int c;
     uint64_t v;
@@ -225,7 +225,7 @@ err:
 static int send_one_msg(int sock_fd, int64_t peer_id, int fd);
 
 static void free_peer(EventfdManager *manager, uint8_t idx) {
-    EventfdManagerPeer &peer = manager->peers[idx];
+    Peer &peer = manager->peers[idx];
     fprintf(stderr, "free peer %d\n", peer.vm_id);
 
     /* advertise the deletion to other peers */
@@ -259,7 +259,7 @@ void eventfd_manager_close(EventfdManager *manager)
 FDs get_fds(const EventfdManager *manager)
 {
     FDs fds = {};
-    EventfdManagerPeer *peer;
+    Peer *peer;
 
     if (manager->sock_fd == -1) {
 		printf("manager->socket_fd is not set");
@@ -359,7 +359,7 @@ err:
 }
 
 static int handle_new_conn(EventfdManager* manager) {
-    EventfdManagerPeer peer, *other_peer;
+    Peer peer, *other_peer;
     struct sockaddr_un unaddr;
     socklen_t unaddr_len;
     int new_fd, next_vm_id, ret;
@@ -441,7 +441,7 @@ static int handle_fds(EventfdManager *manager, const FDs fds)
 
     for (uint8_t i = 0; i < manager->peers.size(); i++) {
         // any message from a peer socket result in a close()
-        EventfdManagerPeer &peer = manager->peers[i];
+        Peer &peer = manager->peers[i];
         printf("peer.sock_fd=%d\n", peer.sock_fd);
         if (peer.sock_fd < fds.max_fd && FD_ISSET(peer.sock_fd, &fds.set)) {
             free_peer(manager, i);
@@ -497,7 +497,7 @@ int main(int argc, char *argv[])
 {
     EventfdManager manager;
     struct sigaction sa, sa_quit;
-    EventfdManagerArgs args = {
+    Args args = {
         .foreground = DEFAULT_FOREGROUND,
         .pid_file = DEFAULT_PID_FILE,
         .unix_socket_path = DEFAULT_UNIX_SOCK_PATH,
