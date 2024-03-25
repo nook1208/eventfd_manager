@@ -22,7 +22,7 @@
 #define LISTEN_BACKLOG 10
 
 #define PATH_MAX        4096	/* chars in a path name including nul */
-#define VM_ID_MAX UINT8_MAX + 1 // 256
+#define VM_ID_MAX 128
 #define PEER_LIST_MAX VM_ID_MAX
 
 typedef enum Error
@@ -50,7 +50,7 @@ typedef struct Args {
  * unix sockets.
  */
 typedef struct Peer {
-    uint8_t vm_id;             /* the vm_id of the peer and index of peer_list in EventfdManager */
+    int vm_id;             /* the vm_id of the peer and index of peer_list in EventfdManager */
     int sock_fd;          /* connected unix sock */
     int eventfd;
 } Peer;
@@ -64,7 +64,7 @@ typedef struct Peer {
 typedef struct EventfdManager {
     char unix_sock_path[PATH_MAX];   /* path to unix socket */
     int sock_fd;                     /* unix sock file descriptor */
-    uint8_t next_vm_id;          /* vm_id to be given to next peer*/
+    char next_vm_id;          /* vm_id to be given to next peer*/
     std::vector<Peer> peers;
     int host_channel_eventfd; /* eventfd for host channel kernel module*/
 } EventfdManager;
@@ -290,7 +290,7 @@ void set_fd_flag(int fd, int new_flag)
     assert(flag != -1);
 }
 
-bool exist_vm_id(EventfdManager* manager, uint8_t vm_id) {
+bool exist_vm_id(EventfdManager* manager, int vm_id) {
     for(const auto& peer: manager->peers) {
         if (peer.vm_id == vm_id) {
             return true;
@@ -386,7 +386,8 @@ static int handle_new_conn(EventfdManager* manager) {
         return -1;
     }
 
-    peer.vm_id = (uint8_t)next_vm_id;
+    peer.vm_id = next_vm_id;
+    printf("[EM] new peer vm_id = %d\n", peer.vm_id);
 
     /* create eventfd */
     ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
@@ -423,7 +424,7 @@ static int handle_new_conn(EventfdManager* manager) {
 
     manager->peers.push_back(peer);
 
-    printf("[EM] new peer vm_id = %d\n", peer.vm_id);
+    printf("[EM] add a new peer successfully vm_id: %d, eventfd: %d\n", peer.vm_id, peer.eventfd);
     return 0;
 
 fail:
@@ -445,7 +446,6 @@ static int handle_fds(EventfdManager *manager, const FDs fds)
     for (uint8_t i = 0; i < manager->peers.size(); i++) {
         // any message from a peer socket result in a close()
         Peer &peer = manager->peers[i];
-        printf("[EM] peer.sock_fd=%d\n", peer.sock_fd);
         if (peer.sock_fd < fds.max_fd && FD_ISSET(peer.sock_fd, &fds.set)) {
             free_peer(manager, i);
         }
