@@ -19,6 +19,8 @@
 #define DEFAULT_FOREGROUND     false
 #define DEFAULT_PID_FILE       "/tmp/eventfd_manager.pid"
 #define DEFAULT_UNIX_SOCK_PATH "/tmp/eventfd_manager_socket"
+#define DEFAULT_SHM_ID         1
+
 #define LISTEN_BACKLOG 10
 
 #define PATH_MAX        4096	/* chars in a path name including nul */
@@ -39,6 +41,7 @@ typedef struct Args {
     bool foreground;
     const char *pid_file;
     const char *unix_socket_path;
+    int shm_id;
 } Args;
 
 /*
@@ -50,8 +53,8 @@ typedef struct Args {
  * unix sockets.
  */
 typedef struct Peer {
-    int vm_id;             /* the vm_id of the peer and index of peer_list in EventfdManager */
-    int sock_fd;          /* connected unix sock */
+    int id;             /* This is for identifying peers. It's NOT vmid */
+    int sock_fd;        /* connected unix sock */
     int eventfd;
 } Peer;
 
@@ -64,9 +67,10 @@ typedef struct Peer {
 typedef struct EventfdManager {
     char unix_sock_path[PATH_MAX];   /* path to unix socket */
     int sock_fd;                     /* unix sock file descriptor */
-    char next_vm_id;          /* vm_id to be given to next peer*/
+    char next_id;                 /* id to be given to next peer*/
+    int shm_id;
     std::vector<Peer> peers;
-    int host_channel_eventfd; /* eventfd for host channel kernel module*/
+    int host_channel_eventfd;        /* eventfd for host channel kernel module*/
 } EventfdManager;
 
 typedef struct FDs {
@@ -103,8 +107,12 @@ eventfd_manager_usage(const char *progname) {
            "  -h: show this help\n"
            "  -F: foreground mode (default is to daemonize)\n"
            "  -p <pid-file>: path to the PID file (used in daemon mode only)\n"
-           "     default " DEFAULT_PID_FILE "\n",
-           progname);
+           "     default " DEFAULT_PID_FILE "\n"
+           "  -S <unix-socket-path>: path to the unix socket to listen to\n"
+           "     default " DEFAULT_UNIX_SOCK_PATH"\n"
+           "  -M <shm-id>: shared memory id should be greater than zero\n"
+		   "     default %d\n",
+		   progname, DEFAULT_SHM_ID);
 }
 
 static void
@@ -120,7 +128,7 @@ eventfd_manager_parse_args(Args *args, int argc, char *argv[])
     int c;
     uint64_t v;
 
-    while ((c = getopt(argc, argv, "hFp:S:")) != -1) {
+    while ((c = getopt(argc, argv, "hFp:S:M:")) != -1) {
 
         switch (c) {
         case 'h': /* help */
@@ -140,6 +148,10 @@ eventfd_manager_parse_args(Args *args, int argc, char *argv[])
             args->unix_socket_path = optarg;
             break;
 
+        case 'M': /* shm id */
+            args->shm_id = atoi(optarg);
+            break;
+
         default:
             eventfd_manager_usage(argv[0]);
             exit(1);
@@ -153,7 +165,7 @@ static void eventfd_manager_quit_cb(int signum) {
     eventfd_manager_quit = 1;
 }
 
-static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_path) {
+static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_path, int shm_id) {
     int ret;
 
     memset(manager, 0, sizeof(*manager));
@@ -165,8 +177,14 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
         return -1;
     }
 
-    fprintf(stderr, "[EM] create host channel module eventfd\n");
+    if (shm_id <= 0) {
+        fprintf(stderr, "[EM] Invalid shm_id: %d\n", shm_id);
+        return -1;
+    }
+    manager->shm_id = shm_id;
+    printf("[EM] manager->shm_id: %d\n", manager->shm_id);
 
+    fprintf(stderr, "[EM] create host channel module eventfd\n");
     /* create eventfd */
     ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (ret < 0) {
@@ -227,11 +245,11 @@ static int send_one_msg(int sock_fd, int64_t peer_id, int fd);
 
 static void free_peer(EventfdManager *manager, uint8_t idx) {
     Peer &peer = manager->peers[idx];
-    fprintf(stderr, "[EM] free peer %d\n", peer.vm_id);
+    fprintf(stderr, "[EM] free peer %d\n", peer.id);
 
     /* advertise the deletion to other peers */
     for (const auto& other_peer: manager->peers) {
-        send_one_msg(other_peer.sock_fd, peer.vm_id, -1);
+        send_one_msg(other_peer.sock_fd, peer.id, -1);
     }
 
     close(peer.sock_fd);
@@ -290,9 +308,9 @@ void set_fd_flag(int fd, int new_flag)
     assert(flag != -1);
 }
 
-bool exist_vm_id(EventfdManager* manager, int vm_id) {
+bool exist_id(EventfdManager* manager, int id) {
     for(const auto& peer: manager->peers) {
-        if (peer.vm_id == vm_id) {
+        if (peer.id == id) {
             return true;
         }
     }
@@ -300,19 +318,19 @@ bool exist_vm_id(EventfdManager* manager, int vm_id) {
     return false;
 }
 
-int get_next_vm_id(EventfdManager* manager) {
-    int next_vm_id = -1;
+int get_next_id(EventfdManager* manager) {
+    int next_id = -1;
 
     // The value of uint8_t is set zero when an integer overflow is occurs
-    for (uint8_t i = manager->next_vm_id; manager->next_vm_id - 1 != i; i++) {
-        if (!exist_vm_id(manager, i)) {
-            next_vm_id = i;
-            manager->next_vm_id = i + 1;
-            return next_vm_id;
+    for (uint8_t i = manager->next_id; manager->next_id - 1 != i; i++) {
+        if (!exist_id(manager, i)) {
+            next_id = i;
+            manager->next_id = i + 1;
+            return next_id;
         }
     }
 
-    return next_vm_id;
+    return next_id;
 }
 
 /* send message to a client unix socket */
@@ -363,7 +381,7 @@ static int handle_new_conn(EventfdManager* manager) {
     Peer peer, *other_peer;
     struct sockaddr_un unaddr;
     socklen_t unaddr_len;
-    int new_fd, next_vm_id, ret;
+    int new_fd, next_id, ret;
     unsigned i;
 
     /* accept the incoming connection */
@@ -379,15 +397,15 @@ static int handle_new_conn(EventfdManager* manager) {
 
     printf("[EM] new peer sock_fd = %d\n", new_fd);
 
-    next_vm_id = get_next_vm_id(manager);
-    if (next_vm_id < 0) {
-        fprintf(stderr, "[EM] cannot allocate new client vm_id\n");
+    next_id = get_next_id(manager);
+    if (next_id < 0) {
+        fprintf(stderr, "[EM] cannot allocate new client id\n");
         close(new_fd);
         return -1;
     }
 
-    peer.vm_id = next_vm_id;
-    printf("[EM] new peer vm_id = %d\n", peer.vm_id);
+    peer.id = next_id;
+    printf("[EM] new peer id = %d\n", peer.id);
 
     /* create eventfd */
     ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
@@ -400,8 +418,14 @@ static int handle_new_conn(EventfdManager* manager) {
 
     printf("[EM] new peer eventfd = %d\n", peer.eventfd);
 
-    /* send peer vm_id and eventfd to peer */
-    ret = send_one_msg(peer.sock_fd, peer.vm_id, peer.eventfd);
+    /* send peer id and eventfd to peer */
+    ret = send_one_msg(peer.sock_fd, peer.id, peer.eventfd);
+    if (ret < 0) {
+        goto fail;
+    }
+
+    /* send manager->shm_id to peer */
+    ret = send_one_msg(peer.sock_fd, manager->shm_id, -1);
     if (ret < 0) {
         goto fail;
     }
@@ -414,17 +438,17 @@ static int handle_new_conn(EventfdManager* manager) {
 
     /* advertise the new peer to other */
     for (const auto& other_peer: manager->peers) {
-        send_one_msg(other_peer.sock_fd, peer.vm_id, peer.eventfd);
+        send_one_msg(other_peer.sock_fd, peer.id, peer.eventfd);
     }
 
     /* advertise the other peers to the new one */
     for (const auto& other_peer: manager->peers) {
-        send_one_msg(peer.sock_fd, other_peer.vm_id, other_peer.eventfd);
+        send_one_msg(peer.sock_fd, other_peer.id, other_peer.eventfd);
     }
 
     manager->peers.push_back(peer);
 
-    printf("[EM] add a new peer successfully vm_id: %d, eventfd: %d\n", peer.vm_id, peer.eventfd);
+    printf("[EM] add a new peer successfully id: %d, eventfd: %d\n", peer.id, peer.eventfd);
     return 0;
 
 fail:
@@ -504,6 +528,7 @@ int main(int argc, char *argv[])
         .foreground = DEFAULT_FOREGROUND,
         .pid_file = DEFAULT_PID_FILE,
         .unix_socket_path = DEFAULT_UNIX_SOCK_PATH,
+        .shm_id = DEFAULT_SHM_ID,
     };
     int ret = 1;
 
@@ -530,7 +555,7 @@ int main(int argc, char *argv[])
     }
 
     /* init the EventfdManager structure */
-    if (eventfd_manager_init(&manager, args.unix_socket_path)) {
+    if (eventfd_manager_init(&manager, args.unix_socket_path, args.shm_id)) {
         fprintf(stderr, "[EM] cannot init evenfd_manager\n");
         goto err;
     }
