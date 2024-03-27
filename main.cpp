@@ -111,8 +111,8 @@ eventfd_manager_usage(const char *progname) {
            "  -S <unix-socket-path>: path to the unix socket to listen to\n"
            "     default " DEFAULT_UNIX_SOCK_PATH"\n"
            "  -M <shm-id>: shared memory id should be greater than zero\n"
-		   "     default %d\n",
-		   progname, DEFAULT_SHM_ID);
+           "     default %d\n",
+		  progname, DEFAULT_SHM_ID);
 }
 
 static void
@@ -249,7 +249,9 @@ static void free_peer(EventfdManager *manager, uint8_t idx) {
 
     /* advertise the deletion to other peers */
     for (const auto& other_peer: manager->peers) {
-        send_one_msg(other_peer.sock_fd, peer.id, -1);
+        if (other_peer.id != peer.id) {
+            send_one_msg(other_peer.sock_fd, peer.id, -1);
+        }
     }
 
     close(peer.sock_fd);
@@ -365,10 +367,10 @@ static int send_one_msg(int sock_fd, int64_t peer_id, int fd) {
 
     ret = sendmsg(sock_fd, &msg, 0);
     if (ret < 0) {
-        fprintf(stderr, "[EM] sendmsg() failed with %s\n", strerror(errno));
+        fprintf(stderr, "[EM] sendmsg() failed with %s peer_id: %d, fd: %d\n", strerror(errno), peer_id, fd);
         goto err;
     } else if (ret == 0) {
-        fprintf(stderr, "[EM] sendmsg() failed\n");
+        fprintf(stderr, "[EM] sendmsg() failed. peer_id: %d, fd: %d\n", peer_id, fd);
         goto err;
     }
 
