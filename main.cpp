@@ -420,31 +420,38 @@ static int handle_new_conn(EventfdManager* manager) {
 
     printf("[EM] new peer eventfd = %d\n", peer.eventfd);
 
+    printf("[EM][PROTOCOL 1] Send new peer id, eventfd to the new peer: %d %d\n", peer.id, peer.eventfd);
     /* send peer id and eventfd to peer */
     ret = send_one_msg(peer.sock_fd, peer.id, peer.eventfd);
     if (ret < 0) {
         goto fail;
     }
 
+    printf("[EM][PROTOCOL 2] Send shm_id to the new peer: %d\n", manager->shm_id);
     /* send manager->shm_id to peer */
     ret = send_one_msg(peer.sock_fd, manager->shm_id, -1);
     if (ret < 0) {
         goto fail;
     }
 
+    printf("[EM][PROTOCOL 3] Send host_channel_eventfd to the new peer: %d\n", manager->host_channel_eventfd);
     /* send host channel's eventfd to peer */
     ret = send_one_msg(peer.sock_fd, -1, manager->host_channel_eventfd);
     if (ret < 0) {
         goto fail;
     }
 
+    printf("[EM][PROTOCOL 4] Send new peer id, eventfd to other peers: %d\n", peer.id, peer.eventfd);
     /* advertise the new peer to other */
     for (const auto& other_peer: manager->peers) {
+		printf("[EM] destination peer's id %d\n", other_peer.id);
         send_one_msg(other_peer.sock_fd, peer.id, peer.eventfd);
     }
 
+    printf("[EM][PROTOCOL 5] Send other peer's id, eventfd to the new peer:\n", peer.id, peer.eventfd);
     /* advertise the other peers to the new one */
     for (const auto& other_peer: manager->peers) {
+		printf("[EM] %d %d\n", other_peer.id, other_peer.eventfd);
         send_one_msg(peer.sock_fd, other_peer.id, other_peer.eventfd);
     }
 
