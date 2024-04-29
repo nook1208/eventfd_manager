@@ -30,6 +30,8 @@
 #define PEER_LIST_MAX VM_ID_MAX
 
 #define SYSLOG_PREFIX "CHANNEL_EAS"
+#define HOST_CHANNEL_PEER_ID 0 // reserved
+#define FIRST_PEER_ID (HOST_CHANNEL_PEER_ID + 1)
 
 typedef enum Error
 {
@@ -58,8 +60,8 @@ typedef struct Args {
  */
 typedef struct Peer {
     int id;             /* This is for identifying peers. It's NOT vmid */
-    int sock_fd;        /* connected unix sock */
     int eventfd;
+    int sock_fd;        /* connected unix sock */
 } Peer;
 
 /*
@@ -69,12 +71,12 @@ typedef struct Peer {
  * of the unix socket and the list of connected peers.
  */
 typedef struct EventfdManager {
-    char unix_sock_path[PATH_MAX];   /* path to unix socket */
-    int sock_fd;                     /* unix sock file descriptor */
-    char next_id;                 /* id to be given to next peer*/
+    char unix_sock_path[PATH_MAX];	/* path to unix socket */
+    int sock_fd;					/* unix sock file descriptor */
+    char next_id = FIRST_PEER_ID;   /* id to be given to next peer*/
     int shm_id;
     std::vector<Peer> peers;
-    int host_channel_eventfd;        /* eventfd for host channel kernel module*/
+    int host_channel_eventfd;       /* eventfd for host channel kernel module*/
 } EventfdManager;
 
 typedef struct FDs {
@@ -186,6 +188,7 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
     int ret;
 
     memset(manager, 0, sizeof(*manager));
+    manager->next_id = FIRST_PEER_ID;
 
     ret = snprintf(manager->unix_sock_path, sizeof(manager->unix_sock_path),
                    "%s", unix_sock_path);
@@ -341,7 +344,7 @@ int get_next_id(EventfdManager* manager) {
     int next_id = -1;
 
     // The value of uint8_t is set zero when an integer overflow is occurs
-    for (uint8_t i = manager->next_id; manager->next_id - 1 != i; i++) {
+    for (uint8_t i = manager->next_id; FIRST_PEER_ID < i; i++) {
         if (!exist_id(manager, i)) {
             next_id = i;
             manager->next_id = i + 1;
