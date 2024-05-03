@@ -28,9 +28,10 @@
 #define PATH_MAX        4096	/* chars in a path name including nul */
 #define VM_ID_MAX 128
 #define PEER_LIST_MAX VM_ID_MAX
-
 #define SYSLOG_PREFIX "CHANNEL_EAS"
+
 #define HOST_CHANNEL_PEER_ID 0 // reserved
+#define HOST_CHANNEL_PATH "/dev/host_channel"
 #define FIRST_PEER_ID (HOST_CHANNEL_PEER_ID + 1)
 
 typedef enum Error
@@ -186,6 +187,8 @@ static void eventfd_manager_quit_cb(int signum) {
 
 static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_path, int shm_id) {
     int ret;
+    int hc_fd;
+    Peer hc = {HOST_CHANNEL_PEER_ID,};
 
     memset(manager, 0, sizeof(*manager));
     manager->next_id = FIRST_PEER_ID;
@@ -205,7 +208,7 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
     ch_syslog("[EM] manager->shm_id: %d\n", manager->shm_id);
 
     ch_syslog("[EM] create host channel module eventfd\n");
-    /* create eventfd */
+    /* create eventfd for host channel */
     ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (ret < 0) {
         ch_syslog("[EM] cannot create host channel module's eventfd %s\n", strerror(errno));
@@ -213,6 +216,25 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
     }
     manager->host_channel_eventfd = ret;
     ch_syslog("[EM] host_channel_eventfd = %d\n", manager->host_channel_eventfd);
+
+    hc.eventfd = dup(manager->host_channel_eventfd);
+    if (hc.eventfd < 0) {
+        ch_syslog("[EM] dup failed: %d\n", hc.eventfd);
+        return -1;
+    }
+
+    /* send the eventfd to the host channel */
+    hc_fd = open(HOST_CHANNEL_PATH, O_WRONLY);
+    if (hc_fd < 0) {
+        ch_syslog("[EM] failed to open %s: %d\n", HOST_CHANNEL_PATH, hc_fd);
+        return -1;
+    }
+    write(hc_fd, &hc, sizeof(hc));
+    close(hc_fd);
+
+	// Test
+	ch_syslog("[EM][TEST] Write hc.eventfd %d\n", hc.eventfd);
+    eventfd_write(hc.eventfd, 1);
 
     return 0;
 }
