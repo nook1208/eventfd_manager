@@ -366,7 +366,7 @@ int get_next_id(EventfdManager* manager) {
     int next_id = -1;
 
     // The value of uint8_t is set zero when an integer overflow is occurs
-    for (uint8_t i = manager->next_id; FIRST_PEER_ID < i; i++) {
+    for (uint8_t i = manager->next_id; FIRST_PEER_ID <= i; i++) {
         if (!exist_id(manager, i)) {
             next_id = i;
             manager->next_id = i + 1;
