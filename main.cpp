@@ -478,7 +478,7 @@ static int handle_new_conn(EventfdManager* manager) {
 
     ch_syslog("[EM][PROTOCOL 3] Send host_channel_eventfd to the new peer: %d\n", manager->host_channel_eventfd);
     /* send host channel's eventfd to peer */
-    ret = send_one_msg(peer.sock_fd, -1, manager->host_channel_eventfd);
+    ret = send_one_msg(peer.sock_fd, HOST_CHANNEL_PEER_ID, manager->host_channel_eventfd);
     if (ret < 0) {
         goto fail;
     }
