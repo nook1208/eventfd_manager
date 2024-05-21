@@ -79,7 +79,6 @@ typedef struct EventfdManager {
     char next_id = FIRST_PEER_ID;   /* id to be given to next peer*/
     int shm_id;
     std::vector<Peer> peers;
-    int host_channel_eventfd;       /* eventfd for host channel kernel module*/
 } EventfdManager;
 
 typedef struct FDs {
@@ -228,26 +227,11 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
     manager->shm_id = shm_id;
     ch_syslog("[EM] manager->shm_id: %d\n", manager->shm_id);
 
-    ch_syslog("[EM] create host channel module eventfd\n");
-    /* create eventfd for host channel */
-    ret = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (ret < 0) {
-        ch_syslog("[EM] cannot create host channel module's eventfd %s\n", strerror(errno));
-        return -1;
-    }
-    manager->host_channel_eventfd = ret;
-	hc.eventfd = ret;
-    ch_syslog("[EM] host_channel_eventfd = %d\n", manager->host_channel_eventfd);
-
 	ret = send_peer_to_host_channel(hc);
 	if (ret) {
         ch_syslog("[EM] send_peer_to_host_channel failed: %d\n", ret);
         return -1;
 	}
-
-	// Test
-	ch_syslog("[EM][TEST] Write hc.eventfd %d\n", hc.eventfd);
-    eventfd_write(hc.eventfd, 1);
 
     return 0;
 }
@@ -322,8 +306,6 @@ void eventfd_manager_close(EventfdManager *manager)
     for (uint8_t i = 0; i < manager->peers.size(); i++) {
         free_peer(manager, i);
     }
-
-    close(manager->host_channel_eventfd);
 
     unlink(manager->unix_sock_path);
     close(manager->sock_fd);
@@ -489,14 +471,7 @@ static int handle_new_conn(EventfdManager* manager) {
         goto fail;
     }
 
-    ch_syslog("[EM][PROTOCOL 3] Send host_channel_eventfd to the new peer: %d\n", manager->host_channel_eventfd);
-    /* send host channel's eventfd to peer */
-    ret = send_one_msg(peer.sock_fd, HOST_CHANNEL_PEER_ID, manager->host_channel_eventfd);
-    if (ret < 0) {
-        goto fail;
-    }
-
-    ch_syslog("[EM][PROTOCOL 4] Send new peer id(%d), eventfd(%d) to other peers\n", peer.id, peer.eventfd);
+    ch_syslog("[EM][PROTOCOL 3] Send new peer id(%d), eventfd(%d) to other peers\n", peer.id, peer.eventfd);
     /* advertise the new peer to other */
     for (const auto& other_peer: manager->peers) {
 		ch_syslog("[EM] destination peer's id %d\n", other_peer.id);
@@ -508,7 +483,7 @@ static int handle_new_conn(EventfdManager* manager) {
 		goto fail;
 	}
 
-    ch_syslog("[EM][PROTOCOL 5] Send other peer's id, eventfd to the new peer:\n", peer.id, peer.eventfd);
+    ch_syslog("[EM][PROTOCOL 4] Send other peer's id, eventfd to the new peer:\n", peer.id, peer.eventfd);
     /* advertise the other peers to the new one */
     for (const auto& other_peer: manager->peers) {
 		ch_syslog("[EM] %d %d\n", other_peer.id, other_peer.eventfd);
