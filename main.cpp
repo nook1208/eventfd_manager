@@ -62,7 +62,7 @@ typedef struct Args {
  * unix sockets.
  */
 typedef struct Peer {
-    int id;             /* This is for identifying peers. It's NOT vmid */
+    int id;
     int eventfd;
     int sock_fd;        /* connected unix sock */
 } Peer;
@@ -186,25 +186,6 @@ static void eventfd_manager_quit_cb(int signum) {
     eventfd_manager_quit = 1;
 }
 
-static int send_peer_to_host_channel(Peer peer) {
-	int origin_fd = peer.eventfd;
-    int hc_opened_fd = open(HOST_CHANNEL_PATH, O_WRONLY);
-    if (hc_opened_fd < 0) {
-        ch_syslog("[EM] failed to open %s: %d\n", HOST_CHANNEL_PATH, hc_opened_fd);
-        return -1;
-    }
-
-    peer.eventfd = dup(origin_fd);
-    if (peer.eventfd < 0) {
-        ch_syslog("[EM] dup failed: %d\n", peer.eventfd);
-        return -1;
-    }
-
-    write(hc_opened_fd, &peer, HOST_WRITE_DATA_SIZE);
-    close(hc_opened_fd);
-	return 0;
-}
-
 static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_path, int shm_id) {
     int ret;
     int hc_fd;
@@ -226,12 +207,6 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
     }
     manager->shm_id = shm_id;
     ch_syslog("[EM] manager->shm_id: %d\n", manager->shm_id);
-
-	ret = send_peer_to_host_channel(hc);
-	if (ret) {
-        ch_syslog("[EM] send_peer_to_host_channel failed: %d\n", ret);
-        return -1;
-	}
 
     return 0;
 }
@@ -477,11 +452,6 @@ static int handle_new_conn(EventfdManager* manager) {
 		ch_syslog("[EM] destination peer's id %d\n", other_peer.id);
         send_one_msg(other_peer.sock_fd, peer.id, peer.eventfd);
     }
-
-	ret = send_peer_to_host_channel(peer);
-	if (ret) {
-		goto fail;
-	}
 
     ch_syslog("[EM][PROTOCOL 4] Send other peer's id, eventfd to the new peer:\n", peer.id, peer.eventfd);
     /* advertise the other peers to the new one */
