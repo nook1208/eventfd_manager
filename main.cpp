@@ -34,6 +34,8 @@
 #define HOST_CHANNEL_PATH "/dev/host_channel"
 #define FIRST_PEER_ID (HOST_CHANNEL_PEER_ID + 1)
 
+#define HOST_WRITE_DATA_SIZE (sizeof(int)* 2)
+
 typedef enum Error
 {
     ERROR_PEER_LIST_EMPTY = -1,
@@ -185,6 +187,25 @@ static void eventfd_manager_quit_cb(int signum) {
     eventfd_manager_quit = 1;
 }
 
+static int send_peer_to_host_channel(Peer peer) {
+	int origin_fd = peer.eventfd;
+    int hc_opened_fd = open(HOST_CHANNEL_PATH, O_WRONLY);
+    if (hc_opened_fd < 0) {
+        ch_syslog("[EM] failed to open %s: %d\n", HOST_CHANNEL_PATH, hc_opened_fd);
+        return -1;
+    }
+
+    peer.eventfd = dup(origin_fd);
+    if (peer.eventfd < 0) {
+        ch_syslog("[EM] dup failed: %d\n", peer.eventfd);
+        return -1;
+    }
+
+    write(hc_opened_fd, &peer, HOST_WRITE_DATA_SIZE);
+    close(hc_opened_fd);
+	return 0;
+}
+
 static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_path, int shm_id) {
     int ret;
     int hc_fd;
@@ -215,22 +236,14 @@ static int eventfd_manager_init(EventfdManager *manager, const char *unix_sock_p
         return -1;
     }
     manager->host_channel_eventfd = ret;
+	hc.eventfd = ret;
     ch_syslog("[EM] host_channel_eventfd = %d\n", manager->host_channel_eventfd);
 
-    hc.eventfd = dup(manager->host_channel_eventfd);
-    if (hc.eventfd < 0) {
-        ch_syslog("[EM] dup failed: %d\n", hc.eventfd);
+	ret = send_peer_to_host_channel(hc);
+	if (ret) {
+        ch_syslog("[EM] send_peer_to_host_channel failed: %d\n", ret);
         return -1;
-    }
-
-    /* send the eventfd to the host channel */
-    hc_fd = open(HOST_CHANNEL_PATH, O_WRONLY);
-    if (hc_fd < 0) {
-        ch_syslog("[EM] failed to open %s: %d\n", HOST_CHANNEL_PATH, hc_fd);
-        return -1;
-    }
-    write(hc_fd, &hc, sizeof(hc));
-    close(hc_fd);
+	}
 
 	// Test
 	ch_syslog("[EM][TEST] Write hc.eventfd %d\n", hc.eventfd);
@@ -483,12 +496,17 @@ static int handle_new_conn(EventfdManager* manager) {
         goto fail;
     }
 
-    ch_syslog("[EM][PROTOCOL 4] Send new peer id, eventfd to other peers: %d\n", peer.id, peer.eventfd);
+    ch_syslog("[EM][PROTOCOL 4] Send new peer id(%d), eventfd(%d) to other peers\n", peer.id, peer.eventfd);
     /* advertise the new peer to other */
     for (const auto& other_peer: manager->peers) {
 		ch_syslog("[EM] destination peer's id %d\n", other_peer.id);
         send_one_msg(other_peer.sock_fd, peer.id, peer.eventfd);
     }
+
+	ret = send_peer_to_host_channel(peer);
+	if (ret) {
+		goto fail;
+	}
 
     ch_syslog("[EM][PROTOCOL 5] Send other peer's id, eventfd to the new peer:\n", peer.id, peer.eventfd);
     /* advertise the other peers to the new one */
