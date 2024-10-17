@@ -2,3 +2,5 @@
 cscope*
 tags*
 eventfd_manager
+client
+server
